@@ -1,0 +1,174 @@
+# ===============================
+# 1. IMPORT & LOAD DATA
+# ===============================
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+df = pd.read_csv('Impact_of_Remote_Work_on_Mental_Health.csv')
+print(df.head())
+print(df.shape)
+
+# ===============================
+# 2. EDA (Exploratory Data Analysis)
+# ===============================
+print(df.info())
+print(df.describe(include='all'))
+print(df.isnull().sum())
+
+plt.figure(figsize=(8, 6))
+sns.countplot(x='Stress_Level', data=df)
+plt.title('Distribution of Stress Levels')
+plt.show()
+
+numeric_df = df.select_dtypes(include=['number'])
+plt.figure(figsize=(16, 12))
+sns.heatmap(numeric_df.corr(), annot=True, cmap='coolwarm', fmt=".2f")
+plt.title('Correlation Matrix')
+plt.show()
+
+# ===============================
+# 3. DATA CLEANING
+# ===============================
+# Handle missing values
+df['Mental_Health_Condition'] = df['Mental_Health_Condition'].fillna(
+    df['Mental_Health_Condition'].mode()[0]
+)
+
+df['Physical_Activity'] = df['Physical_Activity'].fillna(
+    df['Physical_Activity'].mode()[0]
+)
+
+# Remove duplicates
+df.drop_duplicates(inplace=True)
+
+# Convert categorical types
+categorical_cols = df.select_dtypes(include=['object']).columns
+for col in categorical_cols:
+    if col != 'Employee_ID':
+        df[col] = df[col].astype('category')
+
+# Handle outliers (Years_of_Experience)
+Q1 = df['Years_of_Experience'].quantile(0.25)
+Q3 = df['Years_of_Experience'].quantile(0.75)
+IQR = Q3 - Q1
+
+lower_bound = Q1 - 1.5 * IQR
+upper_bound = Q3 + 1.5 * IQR
+
+df['Years_of_Experience'] = df['Years_of_Experience'].clip(
+    lower=lower_bound, upper=upper_bound
+)
+
+# ===============================
+# 4. ENCODING & SCALING
+# ===============================
+from sklearn.preprocessing import MinMaxScaler
+
+# Drop ID
+df = df.drop('Employee_ID', axis=1)
+
+# One-hot encoding
+categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+categorical_cols = categorical_cols.drop('Stress_Level', errors='ignore')
+
+df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
+
+# Create target variable
+X = df.drop(['Stress_Level_Low', 'Stress_Level_Medium'], axis=1)
+
+y = np.where(df['Stress_Level_Low'] == 1, 0,
+             np.where(df['Stress_Level_Medium'] == 1, 1, 2))
+
+# Scaling
+scaler = MinMaxScaler()
+X = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+
+# ===============================
+# 5. FEATURE SELECTION
+# ===============================
+from sklearn.feature_selection import SelectKBest, chi2
+
+k = 10
+selector = SelectKBest(chi2, k=k)
+X_new = selector.fit_transform(X, y)
+
+selected_features = X.columns[selector.get_support()]
+print("Selected Features:", selected_features)
+
+X = X[selected_features]
+
+# ===============================
+# 6. TRAIN TEST SPLIT
+# ===============================
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# ===============================
+# 7. MODEL TRAINING
+# ===============================
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+
+models = {
+    'Logistic Regression': LogisticRegression(max_iter=1000),
+    'Random Forest': RandomForestClassifier(),
+    'SVM': SVC(),
+    'KNN': KNeighborsClassifier()
+}
+
+for name, model in models.items():
+    model.fit(X_train, y_train)
+    print(f"{name} trained.")
+
+# ===============================
+# 8. EVALUATION
+# ===============================
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, classification_report
+
+model_evals = {}
+
+for name, model in models.items():
+    y_pred = model.predict(X_test)
+
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='macro', zero_division=0)
+    recall = recall_score(y_test, y_pred, average='macro', zero_division=0)
+    f1 = f1_score(y_test, y_pred, average='macro', zero_division=0)
+
+    model_evals[name] = accuracy
+
+    print(f"\n=== {name} ===")
+    print(classification_report(y_test, y_pred))
+    print("Accuracy:", accuracy)
+
+best_model = max(model_evals, key=model_evals.get)
+print("\nBest Model:", best_model)
+print("Best Accuracy:", model_evals[best_model])
+
+# ===============================
+# 9. HYPERPARAMETER TUNING (SVM)
+# ===============================
+from sklearn.model_selection import GridSearchCV
+
+param_grid = {
+    'C': [0.1, 1, 10, 100],
+    'gamma': [1, 0.1, 0.01, 0.001],
+    'kernel': ['rbf', 'linear', 'poly']
+}
+
+grid_search = GridSearchCV(SVC(), param_grid, verbose=2)
+grid_search.fit(X_train, y_train)
+
+best_svm = grid_search.best_estimator_
+y_pred_best = best_svm.predict(X_test)
+
+print("\n=== Tuned SVM ===")
+print(classification_report(y_test, y_pred_best))
+print("Accuracy:", accuracy_score(y_test, y_pred_best))
